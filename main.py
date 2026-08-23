@@ -594,9 +594,15 @@ class ZssmGrokPlugin(Star):
 
             x_involved = False
             if plan.is_search:
-                query = plan.search_query or plan.user_prompt
+                raw_inline = plan.user_prompt.split("\n\n【上下文信息】", 1)[0].strip()
+                query = plan.search_query or raw_inline
+                if query != raw_inline:
+                    # 附上原始指令全文，避免搜索词提取时丢失语境
+                    query += f"\n（用户原始消息：{raw_inline}）"
                 if plan.search_context:
                     query += f"\n\n【上下文信息】\n{plan.search_context}"
+                if plan.images:
+                    query += "\n\n（用户随消息附带了图片，请先结合图片内容理解要搜索的对象（如人物/物品/场景），再进行搜索）"
                 search_kinds = [plan.search_kind]
                 prompt_kind = plan.search_kind
                 # 开启 search_include_x 后，普通“搜索”指令也同时开启 X 搜索
@@ -610,6 +616,7 @@ class ZssmGrokPlugin(Star):
                 reply_text, _citations = await client.chat(
                     user_prompt=build_search_user_prompt(query, prompt_kind),
                     system_prompt=build_search_system_prompt(),
+                    image_specs=plan.images,
                     kinds=search_kinds,
                 )
             else:
