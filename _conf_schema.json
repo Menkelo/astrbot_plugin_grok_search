@@ -21,7 +21,7 @@
     "description": "使用的模型名",
     "type": "string",
     "default": "grok-4",
-    "hint": "对应 grok2api 中配置的公开模型名；解释图片需选择支持视觉的模型"
+    "hint": "对应 grok2api 中配置的公开模型名；解释图片需选择支持视觉的模型。配置好地址与密钥并重载插件后，此栏会自动变为下拉列表（读取自 grok2api /v1/models）"
   },
   "search_include_x": {
     "description": "普通搜索同时开启 X 搜索",

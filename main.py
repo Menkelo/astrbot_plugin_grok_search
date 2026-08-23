@@ -34,6 +34,7 @@ from .grok_client import (
     GROK2API_SEARCH_WEB,
     GROK2API_SEARCH_X,
     GROK2API_SEARCH_ALL,
+    fetch_models,
 )
 from .formatter import normalize_link_spacing, demote_markdown_to_text
 from .file_preview_utils import (
@@ -117,6 +118,33 @@ class ZssmGrokPlugin(Star):
     def __init__(self, context: Context, config: Optional[Dict[str, Any]] = None):
         super().__init__(context)
         self.config: Dict[str, Any] = config if config is not None else {}
+
+    async def initialize(self):
+        """插件加载后从 grok2api 拉取模型列表，注入配置页下拉选项。
+
+        AstrBot 配置页读取的是插件 AstrBotConfig 实例上的 schema 对象
+        （新旧版本行为一致），运行时写入 options 即可让配置页变为下拉列表；
+        拉取失败则保持手填输入框，不影响使用。
+        """
+        await self._refresh_model_options()
+
+    async def _refresh_model_options(self) -> None:
+        base_url = self._get_conf_str(GROK2API_BASE_URL_KEY, "")
+        api_key = self._get_conf_str(GROK2API_API_KEY_KEY, "")
+        schema = getattr(self.config, "schema", None)
+        if not base_url or not api_key or not isinstance(schema, dict):
+            return
+        try:
+            models = await fetch_models(base_url, api_key)
+        except Exception as e:
+            logger.warning("zssm_grok: 拉取模型列表失败，配置页保持手填模式: %s", e)
+            return
+        if not models:
+            return
+        item = schema.get(GROK2API_MODEL_KEY)
+        if isinstance(item, dict):
+            item["options"] = models
+            logger.info("zssm_grok: 已刷新配置页模型下拉列表（%d 个模型）", len(models))
 
     # === 基础工具 ===
 

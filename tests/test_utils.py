@@ -13,6 +13,7 @@ from astrbot_plugin_grok_search.grok_client import (
     extract_reply_text,
     image_spec_to_url,
     normalize_base_url,
+    parse_models_payload,
     sniff_image_mime,
 )
 from astrbot_plugin_grok_search.formatter import demote_markdown_to_text, normalize_link_spacing
@@ -142,6 +143,21 @@ class TestGrokClientPure(unittest.TestCase):
         self.assertEqual(extract_citations(payload), [("天气网", "https://a.com/1")])
         self.assertEqual(extract_reply_text({}), "")
         self.assertEqual(extract_citations({}), [])
+
+    def test_parse_models_payload(self):
+        payload = {
+            "object": "list",
+            "data": [
+                {"id": "grok-4", "object": "model"},
+                {"id": "grok-4-fast", "object": "model"},
+                {"id": "grok-4"},  # 重复去重
+                {"object": "model"},  # 无 id 跳过
+                "bad-item",  # 非对象跳过
+            ],
+        }
+        self.assertEqual(parse_models_payload(payload), ["grok-4", "grok-4-fast"])
+        self.assertEqual(parse_models_payload({}), [])
+        self.assertEqual(parse_models_payload({"data": None}), [])
 
 
 class TestFileExts(unittest.TestCase):

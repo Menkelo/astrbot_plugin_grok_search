@@ -187,6 +187,39 @@ class GrokSearchError(Exception):
     """grok2api 调用失败（网络/鉴权/上游错误）。"""
 
 
+def parse_models_payload(payload: dict) -> List[str]:
+    """解析 /v1/models 响应（OpenAI 格式 {"data":[{"id":...}]}），返回去重模型 id 列表。"""
+    ids: List[str] = []
+    try:
+        data = payload.get("data")
+        if isinstance(data, list):
+            for item in data:
+                if isinstance(item, dict):
+                    mid = str(item.get("id") or "").strip()
+                    if mid and mid not in ids:
+                        ids.append(mid)
+    except Exception:
+        pass
+    return ids
+
+
+async def fetch_models(base_url: str, api_key: str, *, timeout_sec: int = 15) -> List[str]:
+    """从 grok2api 的 GET /v1/models 拉取可用模型列表。"""
+    endpoint = normalize_base_url(base_url) + "/models"
+    headers = {"Authorization": f"Bearer {(api_key or '').strip()}"}
+    timeout = aiohttp.ClientTimeout(total=max(5, timeout_sec))
+    async with aiohttp.ClientSession(timeout=timeout) as session:
+        async with session.get(endpoint, headers=headers) as resp:
+            text = await resp.text()
+            if resp.status != 200:
+                raise GrokSearchError(f"grok2api HTTP {resp.status}: {text[:200]}")
+    try:
+        payload = json.loads(text)
+    except ValueError as e:
+        raise GrokSearchError(f"grok2api 模型列表响应非 JSON: {e}") from e
+    return parse_models_payload(payload)
+
+
 class GrokChatClient:
     """直连 grok2api 的 OpenAI 兼容端点：普通对话（含图片）、联网搜索、X 搜索。"""
 

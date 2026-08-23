@@ -16,6 +16,7 @@
 - **X（推特）搜索**：`zssm x搜索马斯克最新动态`（`x_search` 服务端工具）
 - **组合搜索**：`zssm 全搜今天大事` —— 一次请求同时开启联网 + X 搜索，综合两边信息作答
 - 回复格式自动降级为 QQ 等纯文本客户端友好排版，保留 `**关键词**` / `**详细阐述**` 小节标题
+- 配置页模型选择：填好地址与密钥后重载插件，`grok2api_model` 自动变为下拉列表（来自 `/v1/models`）
 
 ## 触发方式（与 zssm_core 一致）
 
@@ -30,7 +31,7 @@
 | `enable_keyword_zssm` | bool | `true` | 是否启用“zssm”关键词自动触发。 |
 | `grok2api_base_url` | string | (空) | grok2api 服务地址，如 `http://127.0.0.1:8000`（可含/不含 `/v1`，自动补全）。 |
 | `grok2api_api_key` | string | (空) | grok2api 后台创建的客户端 API Key（Bearer 方式携带）。 |
-| `grok2api_model` | string | `grok-4` | grok2api 中配置的公开模型名；解释图片需选择支持视觉的模型。 |
+| `grok2api_model` | string | `grok-4` | grok2api 中配置的公开模型名；解释图片需选择支持视觉的模型。配置好地址与密钥并**重载插件**后，此栏自动变为下拉列表（读取自 grok2api `/v1/models`）。 |
 | `search_include_x` | bool | `false` | 开启后普通「zssm 搜索xxx」同时开启联网 + X 搜索（等同“全搜”）。 |
 | `llm_timeout_sec` | int | `90` | LLM 调用超时（秒）。 |
 | `llm_retry_times` | int | `2` | 失败重试次数（含首次）。 |
