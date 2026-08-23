@@ -1,0 +1,50 @@
+{
+  "grok2api_base_url": {
+    "description": "grok2api 服务地址",
+    "type": "string",
+    "default": "",
+    "hint": "如 http://127.0.0.1:8000 或 http://127.0.0.1:8000/v1，程序会自动补全 /v1"
+  },
+  "grok2api_api_key": {
+    "description": "grok2api 的客户端 API Key",
+    "type": "string",
+    "default": "",
+    "hint": "即 grok2api 后台创建的 Client Key（请求时以 Bearer 方式携带）"
+  },
+  "grok2api_model": {
+    "description": "搜索使用的模型名",
+    "type": "string",
+    "default": "grok-4",
+    "hint": "对应 grok2api 中配置的公开模型名"
+  },
+  "grok2api_x_from_date": {
+    "description": "X 搜索起始日期（可选）",
+    "type": "string",
+    "default": "",
+    "hint": "格式 YYYY-MM-DD，留空不限"
+  },
+  "grok2api_x_to_date": {
+    "description": "X 搜索结束日期（可选）",
+    "type": "string",
+    "default": "",
+    "hint": "格式 YYYY-MM-DD，留空不限"
+  },
+  "llm_timeout_sec": {
+    "description": "搜索请求超时（秒）",
+    "type": "int",
+    "default": 90,
+    "hint": "搜索类请求耗时较长，范围建议 60-180"
+  },
+  "llm_retry_times": {
+    "description": "请求失败自动重试次数（含首次）",
+    "type": "int",
+    "default": 2,
+    "hint": "1=不重试；2=重试1次；建议范围 1-5"
+  },
+  "show_cost": {
+    "description": "回复末尾显示耗时",
+    "type": "bool",
+    "default": true,
+    "hint": "在回复末尾附加 cost: x.xxx s"
+  }
+}
