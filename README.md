@@ -12,9 +12,9 @@
 - **图片解释（视觉）**：`zssm [图片]` 或回复图片后发 `zssm` —— 图片以 data URI / URL 直接送入 grok2api 视觉模型
 - **QQ 群文件解释**：回复群文件后发 `zssm`，文本类读取内容预览，PDF 转 Markdown（需 PyMuPDF，可选）
 - **合并转发解释**：回复聊天记录后发 `zssm`，展开全部节点整段解释
-- **联网搜索**：`zssm 搜索今天的天气`（`web_search` 服务端工具）
+- **联网搜索**：`zssm 搜索今天的天气`（`web_search` 服务端工具）；开启配置 `search_include_x` 后自动同时开启 X 搜索
 - **X（推特）搜索**：`zssm x搜索马斯克最新动态`（`x_search` 服务端工具）
-- **组合搜索**：`zssm 全搜今天大事` —— 一次请求同时开启联网 + X 搜索
+- **组合搜索**：`zssm 全搜今天大事` —— 一次请求同时开启联网 + X 搜索，综合两边信息作答
 - 搜索回复末尾自动附带「参考链接」列表（从响应引用去重提取）
 - 回复格式自动降级为 QQ 等纯文本客户端友好排版，保留 `**关键词**` / `**详细阐述**` 小节标题
 
@@ -32,6 +32,7 @@
 | `grok2api_base_url` | string | (空) | grok2api 服务地址，如 `http://127.0.0.1:8000`（可含/不含 `/v1`，自动补全）。 |
 | `grok2api_api_key` | string | (空) | grok2api 后台创建的客户端 API Key（Bearer 方式携带）。 |
 | `grok2api_model` | string | `grok-4` | grok2api 中配置的公开模型名；解释图片需选择支持视觉的模型。 |
+| `search_include_x` | bool | `false` | 开启后普通「zssm 搜索xxx」同时开启联网 + X 搜索（等同“全搜”）。 |
 | `llm_timeout_sec` | int | `90` | LLM 调用超时（秒）。 |
 | `llm_retry_times` | int | `2` | 失败重试次数（含首次）。 |
 | `show_cost` | bool | `true` | 回复末尾显示耗时。 |

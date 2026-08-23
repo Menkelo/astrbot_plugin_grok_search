@@ -23,6 +23,12 @@
     "default": "grok-4",
     "hint": "对应 grok2api 中配置的公开模型名；解释图片需选择支持视觉的模型"
   },
+  "search_include_x": {
+    "description": "普通搜索同时开启 X 搜索",
+    "type": "bool",
+    "default": false,
+    "hint": "开启后「zssm 搜索xxx」等普通搜索指令会同时开启联网搜索与 X 搜索（等同“全搜”）。X 搜索需要 grok2api 内 Console/Build 类账号支持，Web 类账号会报错"
+  },
   "llm_timeout_sec": {
     "description": "LLM 调用超时（秒）",
     "type": "int",

@@ -1,6 +1,6 @@
 name: astrbot_plugin_grok_search
 display_name: Zssm(Grok)
 desc: "[aiocqhttp] zssm 的 grok2api 版：解释文本/图片/群文件/合并转发，支持联网搜索、X 搜索与组合搜索"
-version: 2.0.0
+version: 2.1.0
 author: Menkelo
 repo: https://github.com/Menkelo/astrbot_plugin_grok_search

@@ -50,6 +50,7 @@ FILE_PREVIEW_MAX_SIZE_KB_KEY = "file_preview_max_size_kb"
 GROK2API_BASE_URL_KEY = "grok2api_base_url"
 GROK2API_API_KEY_KEY = "grok2api_api_key"
 GROK2API_MODEL_KEY = "grok2api_model"
+SEARCH_INCLUDE_X_KEY = "search_include_x"
 LLM_TIMEOUT_SEC_KEY = "llm_timeout_sec"
 LLM_RETRY_TIMES_KEY = "llm_retry_times"
 SHOW_COST_KEY = "show_cost"
@@ -564,14 +565,25 @@ class ZssmGrokPlugin(Star):
             await self._send_processing_image_notice(event)
             start_ts = time.perf_counter()
 
+            x_involved = False
             if plan.is_search:
                 query = plan.search_query or plan.user_prompt
                 if plan.search_context:
                     query += f"\n\n【上下文信息】\n{plan.search_context}"
+                search_kinds = [plan.search_kind]
+                prompt_kind = plan.search_kind
+                # 开启 search_include_x 后，普通“搜索”指令也同时开启 X 搜索
+                if (
+                    plan.search_kind == GROK2API_SEARCH_WEB
+                    and self._get_conf_bool(SEARCH_INCLUDE_X_KEY, False)
+                ):
+                    search_kinds = [GROK2API_SEARCH_ALL]
+                    prompt_kind = GROK2API_SEARCH_ALL
+                x_involved = GROK2API_SEARCH_X in search_kinds or GROK2API_SEARCH_ALL in search_kinds
                 reply_text, citations = await client.chat(
-                    user_prompt=build_search_user_prompt(query, plan.search_kind),
+                    user_prompt=build_search_user_prompt(query, prompt_kind),
                     system_prompt=build_search_system_prompt(),
-                    kinds=[plan.search_kind],
+                    kinds=search_kinds,
                 )
             else:
                 reply_text, citations = await client.chat(
@@ -599,7 +611,7 @@ class ZssmGrokPlugin(Star):
         except GrokSearchError as e:
             logger.error("zssm_grok: grok2api request failed: %s", e)
             hint = ""
-            if plan.is_search and plan.search_kind in (GROK2API_SEARCH_X, GROK2API_SEARCH_ALL):
+            if x_involved:
                 hint = "\n提示：X 搜索需要 grok2api 内的账号类型支持（Web 类账号仅支持联网搜索）。"
             yield self._reply_text_result(event, f"请求失败：{str(e)[:300]}{hint}")
             try:
