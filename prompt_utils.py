@@ -25,10 +25,21 @@ DEFAULT_SEARCH_USER_PROMPT_X = (
     "问题：\n{text}"
 )
 
+DEFAULT_SEARCH_USER_PROMPT_ALL = (
+    "请同时使用联网搜索与 X（推特）搜索，综合网页与站内帖子信息回答下面的问题，"
+    "注明信息来源与时间。\n"
+    "问题：\n{text}"
+)
 
-def build_search_user_prompt(text: Optional[str], search_x: bool = False) -> str:
-    """构建搜索场景的用户提示词。"""
-    tmpl = DEFAULT_SEARCH_USER_PROMPT_X if search_x else DEFAULT_SEARCH_USER_PROMPT
+
+def build_search_user_prompt(text: Optional[str], search_x: bool = False, search_all: bool = False) -> str:
+    """构建搜索场景的用户提示词。search_all 时要求同时使用联网与 X 搜索。"""
+    if search_all:
+        tmpl = DEFAULT_SEARCH_USER_PROMPT_ALL
+    elif search_x:
+        tmpl = DEFAULT_SEARCH_USER_PROMPT_X
+    else:
+        tmpl = DEFAULT_SEARCH_USER_PROMPT
     return tmpl.format(text=text or "")
 
 

@@ -35,6 +35,7 @@ USAGE_HINT = (
     "用法：\n"
     "/search <问题> - 联网搜索（别名：/搜索、/联网搜索）\n"
     "/xsearch <问题> - X（推特）搜索（别名：/x搜索、/推特搜索、/搜推特）\n"
+    "/gsearch <问题> - 组合搜索，同时联网+X（别名：/全搜、/全网搜索）\n"
     "也可以回复一条消息后再发指令，被回复内容会作为搜索上下文。"
 )
 
@@ -44,6 +45,11 @@ WEB_QUERY_PATTERN = re.compile(
 )
 X_QUERY_PATTERN = re.compile(
     r"^[/\\]?\s*(?:xsearch|推特搜索|搜推特|x搜索|x(?=[^a-z0-9]|$))\s*[:：,，]?\s*([\s\S]+)$",
+    re.I,
+)
+# 组合搜索：一次请求同时开启联网搜索 + X 搜索
+ALL_QUERY_PATTERN = re.compile(
+    r"^[/\\]?\s*(?:gsearch|allsearch|全网搜索|全搜|混合搜索)\s*[:：,，]?\s*([\s\S]+)$",
     re.I,
 )
 # 去掉搜索词开头的口语填充词，如“/搜索 一下今天天气”
@@ -120,11 +126,16 @@ class GrokSearchPlugin(Star):
         return s.strip() if isinstance(s, str) else ""
 
     @staticmethod
-    def extract_query(text: str, kind: str) -> str:
-        """从消息文本中提取搜索词（去掉指令头与开头的填充词）。"""
+    def extract_query(text: str, kinds: List[str]) -> str:
+        """从消息文本中提取搜索词（去掉指令头与开头的填充词）。kinds 决定按哪类指令头解析。"""
         if not isinstance(text, str) or not text.strip():
             return ""
-        pattern = X_QUERY_PATTERN if kind == GROK2API_SEARCH_X else WEB_QUERY_PATTERN
+        if len(kinds) > 1:
+            pattern = ALL_QUERY_PATTERN
+        elif kinds and kinds[0] == GROK2API_SEARCH_X:
+            pattern = X_QUERY_PATTERN
+        else:
+            pattern = WEB_QUERY_PATTERN
         m = pattern.match(text.strip())
         query = (m.group(1) or "").strip() if m else ""
         return QUERY_FILLER_PATTERN.sub("", query).strip()
@@ -158,17 +169,23 @@ class GrokSearchPlugin(Star):
 
     @filter.command("search", alias={"搜索", "联网搜索"})
     async def web_search(self, event: AstrMessageEvent):
-        async for r in self._handle_search(event, GROK2API_SEARCH_WEB):
+        async for r in self._handle_search(event, [GROK2API_SEARCH_WEB]):
             yield r
 
     @filter.command("xsearch", alias={"x搜索", "推特搜索", "搜推特"})
     async def x_search(self, event: AstrMessageEvent):
-        async for r in self._handle_search(event, GROK2API_SEARCH_X):
+        async for r in self._handle_search(event, [GROK2API_SEARCH_X]):
             yield r
 
-    async def _handle_search(self, event: AstrMessageEvent, kind: str):
+    @filter.command("gsearch", alias={"allsearch", "全搜", "全网搜索", "混合搜索"})
+    async def global_search(self, event: AstrMessageEvent):
+        """组合搜索：一次请求同时开启联网搜索与 X 搜索，由模型综合两边信息回答。"""
+        async for r in self._handle_search(event, [GROK2API_SEARCH_WEB, GROK2API_SEARCH_X]):
+            yield r
+
+    async def _handle_search(self, event: AstrMessageEvent, kinds: List[str]):
         text = self._message_text(event)
-        query = self.extract_query(text, kind)
+        query = self.extract_query(text, kinds)
         if not query:
             yield event.plain_result(USAGE_HINT)
             try:
@@ -197,17 +214,19 @@ class GrokSearchPlugin(Star):
         try:
             reply_text, citations = await client.search(
                 user_prompt=build_search_user_prompt(
-                    full_query, search_x=(kind == GROK2API_SEARCH_X)
+                    full_query,
+                    search_x=(GROK2API_SEARCH_X in kinds),
+                    search_all=(len(kinds) > 1),
                 ),
                 system_prompt=build_search_system_prompt(),
-                kinds=[kind],
+                kinds=kinds,
                 x_from_date=self._get_conf_str(GROK2API_X_FROM_DATE_KEY),
                 x_to_date=self._get_conf_str(GROK2API_X_TO_DATE_KEY),
             )
         except GrokSearchError as e:
             logger.error("grok_search: search failed: %s", e)
             hint = ""
-            if kind == GROK2API_SEARCH_X:
+            if GROK2API_SEARCH_X in kinds:
                 hint = "\n提示：X 搜索需要 grok2api 内的账号类型支持（Web 类账号仅支持联网搜索）。"
             yield event.plain_result(f"搜索失败：{str(e)[:300]}{hint}")
             try:

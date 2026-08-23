@@ -15,7 +15,7 @@ from astrbot_plugin_grok_search.formatter import demote_markdown_to_text, normal
 
 class TestQueryExtraction(unittest.TestCase):
     def test_web_query(self):
-        x = lambda t: GrokSearchPlugin.extract_query(t, "web")
+        x = lambda t: GrokSearchPlugin.extract_query(t, ["web"])
         self.assertEqual(x("/search 今天天气"), "今天天气")
         self.assertEqual(x("search 今天天气"), "今天天气")
         self.assertEqual(x("/搜索 今天天气"), "今天天气")
@@ -26,7 +26,7 @@ class TestQueryExtraction(unittest.TestCase):
         self.assertEqual(x(""), "")
 
     def test_x_query(self):
-        x = lambda t: GrokSearchPlugin.extract_query(t, "x")
+        x = lambda t: GrokSearchPlugin.extract_query(t, ["x"])
         self.assertEqual(x("/xsearch 马斯克最新动态"), "马斯克最新动态")
         self.assertEqual(x("/x搜索 马斯克"), "马斯克")
         self.assertEqual(x("/推特搜索 世界杯"), "世界杯")
@@ -34,8 +34,17 @@ class TestQueryExtraction(unittest.TestCase):
         self.assertEqual(x("xsearch 马斯克"), "马斯克")
         self.assertEqual(x("/xsearch"), "")
 
+    def test_all_query(self):
+        x = lambda t: GrokSearchPlugin.extract_query(t, ["web", "x"])
+        self.assertEqual(x("/gsearch 马斯克 最新消息"), "马斯克 最新消息")
+        self.assertEqual(x("/allsearch AI 进展"), "AI 进展")
+        self.assertEqual(x("/全搜 今天大事"), "今天大事")
+        self.assertEqual(x("/全网搜索：科技新闻"), "科技新闻")
+        self.assertEqual(x("/混合搜索 火箭"), "火箭")
+        self.assertEqual(x("/gsearch"), "")
+
     def test_multiline_query(self):
-        q = GrokSearchPlugin.extract_query("/search 今天的天气\n要详细的", "web")
+        q = GrokSearchPlugin.extract_query("/search 今天的天气\n要详细的", ["web"])
         self.assertEqual(q, "今天的天气\n要详细的")
 
 
@@ -51,9 +60,17 @@ class TestGrokClientPure(unittest.TestCase):
     def test_build_search_tools(self):
         self.assertEqual(build_search_tools(["web"]), [{"type": "web_search"}])
         self.assertEqual(build_search_tools(["x"]), [{"type": "x_search"}])
+        # 组合搜索：同一请求同时声明两种工具
         self.assertEqual(
-            build_search_tools(["x"], x_from_date="2026-08-01", x_to_date="2026-08-24"),
-            [{"type": "x_search", "from_date": "2026-08-01", "to_date": "2026-08-24"}],
+            build_search_tools(["web", "x"]),
+            [{"type": "web_search"}, {"type": "x_search"}],
+        )
+        self.assertEqual(
+            build_search_tools(["web", "x"], x_from_date="2026-08-01", x_to_date="2026-08-24"),
+            [
+                {"type": "web_search"},
+                {"type": "x_search", "from_date": "2026-08-01", "to_date": "2026-08-24"},
+            ],
         )
         self.assertEqual(
             build_search_tools(["x"], x_from_date="2026/08/01", x_to_date="bad"),
