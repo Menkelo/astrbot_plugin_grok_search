@@ -2,12 +2,18 @@ from __future__ import annotations
 
 import asyncio
 import base64
+import io
 import json
 import os
 import re
 from typing import Any, List, Optional, Tuple
 
 import aiohttp
+
+try:
+    from PIL import Image  # type: ignore[import-not-found]
+except Exception:  # pragma: no cover
+    Image = None  # type: ignore[assignment]
 
 
 # grok2api 通过请求体 tools 数组声明服务端搜索工具：
@@ -21,6 +27,8 @@ GROK2API_SEARCH_ALL = "all"
 
 # 单张图片（本地/base64）允许的最大字节数，超过则跳过
 MAX_IMAGE_BYTES = 8 * 1024 * 1024
+# 重编码时允许的最大边长（像素），超过则等比缩小
+MAX_IMAGE_DIM = 4096
 # 远程图片下载超时（秒）与并发数
 IMAGE_DOWNLOAD_TIMEOUT_SEC = 15
 IMAGE_DOWNLOAD_CONCURRENCY = 4
@@ -53,7 +61,7 @@ def build_search_tools(kinds: List[str]) -> List[dict]:
 
 
 def sniff_image_mime(data: bytes) -> str:
-    """按魔数识别常见图片格式。"""
+    """按魔数识别常见图片格式；无法识别时返回空串（不猜测）。"""
     if data[:8] == b"\x89PNG\r\n\x1a\n":
         return "image/png"
     if data[:3] == b"\xff\xd8\xff":
@@ -64,12 +72,49 @@ def sniff_image_mime(data: bytes) -> str:
         return "image/webp"
     if data[:2] == b"BM":
         return "image/bmp"
-    return "image/jpeg"
+    return ""
+
+
+def prepare_image_bytes(raw: bytes) -> Optional[Tuple[str, bytes]]:
+    """校验并规范化图片字节，返回 (mime, bytes)；无效图片返回 None。
+
+    优先用 Pillow 完整解码后重编码：可以拦截损坏/截断的图片（QQ CDN 偶发，
+    上游会报 invalid_image 400），并把非标准图片规范成标准 PNG/JPEG。
+    带透明通道的保留 PNG，其余转为体积更小的 JPEG；超大尺寸等比缩小。
+    Pillow 不可用时退回魔数嗅探（无法拦截内容损坏的图片）。"""
+    if not raw or len(raw) > MAX_IMAGE_BYTES:
+        return None
+    if Image is not None:
+        try:
+            buf = io.BytesIO()
+            with Image.open(io.BytesIO(raw)) as im:
+                im.load()  # 完整解码，损坏图片在此抛异常
+                if max(im.size) > MAX_IMAGE_DIM:
+                    im.thumbnail((MAX_IMAGE_DIM, MAX_IMAGE_DIM))
+                if im.mode in ("RGBA", "LA", "PA") or (
+                    im.mode == "P" and "transparency" in im.info
+                ):
+                    im.convert("RGBA").save(buf, format="PNG", optimize=True)
+                    mime = "image/png"
+                else:
+                    im.convert("RGB").save(buf, format="JPEG", quality=88, optimize=True)
+                    mime = "image/jpeg"
+            data = buf.getvalue()
+            if not data or len(data) > MAX_IMAGE_BYTES:
+                return None
+            return mime, data
+        except Exception:
+            return None
+    # 无 Pillow 的兜底：至少要求魔数明确命中已知格式
+    mime = sniff_image_mime(raw)
+    if not mime:
+        return None
+    return mime, raw
 
 
 def image_spec_to_url(spec: str) -> Optional[str]:
     """把图片规格（data URI/base64://本地路径）转换为 chat completions 可用的 image_url。
-    本地文件与 base64 统一转为 data URI；无法处理时返回 None。
+    本地文件与 base64 统一解码、校验后转为 data URI；无法处理时返回 None。
     注意：http(s) 远程图片不在此处理（服务端可能拉取失败），由 chat() 先下载转 data URI。"""
     if not isinstance(spec, str) or not spec.strip():
         return None
@@ -81,11 +126,15 @@ def image_spec_to_url(spec: str) -> Optional[str]:
         return s
     try:
         if ls.startswith("base64://"):
-            raw = base64.b64decode(s[len("base64://"):] + "===", validate=False)
-            if not raw or len(raw) > MAX_IMAGE_BYTES:
+            b64 = s[len("base64://"):]
+            if len(b64) % 4:
+                b64 += "=" * (4 - len(b64) % 4)
+            raw = base64.b64decode(b64, validate=False)
+            prepared = prepare_image_bytes(raw)
+            if not prepared:
                 return None
-            mime = sniff_image_mime(raw)
-            return f"data:{mime};base64,{base64.b64encode(raw).decode('ascii')}"
+            mime, data = prepared
+            return f"data:{mime};base64,{base64.b64encode(data).decode('ascii')}"
         fp = s
         if ls.startswith("file://"):
             fp = s[7:]
@@ -95,10 +144,11 @@ def image_spec_to_url(spec: str) -> Optional[str]:
         if os.path.isfile(fp):
             with open(fp, "rb") as f:
                 raw = f.read(MAX_IMAGE_BYTES + 1)
-            if not raw or len(raw) > MAX_IMAGE_BYTES:
+            prepared = prepare_image_bytes(raw)
+            if not prepared:
                 return None
-            mime = sniff_image_mime(raw)
-            return f"data:{mime};base64,{base64.b64encode(raw).decode('ascii')}"
+            mime, data = prepared
+            return f"data:{mime};base64,{base64.b64encode(data).decode('ascii')}"
     except Exception:
         return None
     return None
@@ -125,12 +175,19 @@ async def download_image_to_data_uri(
                     if logger is not None:
                         logger.warning("grok_search: download image HTTP %s: %s", resp.status, url[:160])
                     return None
+                ctype = (resp.content_type or "").lower()
+                if ctype.startswith("text/"):
+                    # QQ CDN 异常时可能 200 返回 HTML 错误页
+                    if logger is not None:
+                        logger.warning("grok_search: image url returned %s, skip: %s", ctype, url[:160])
+                    return None
                 data = await resp.content.read(max_bytes + 1)
-        if not data or len(data) > max_bytes:
+        prepared = prepare_image_bytes(data)
+        if not prepared:
             if logger is not None:
-                logger.warning("grok_search: image too large or empty, skip: %s", url[:160])
+                logger.warning("grok_search: downloaded bytes are not a valid image, skip: %s", url[:160])
             return None
-        mime = sniff_image_mime(data)
+        mime, data = prepared
         return f"data:{mime};base64,{base64.b64encode(data).decode('ascii')}"
     except Exception as e:
         if logger is not None:

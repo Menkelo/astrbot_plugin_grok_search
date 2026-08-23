@@ -14,6 +14,7 @@ from astrbot_plugin_grok_search.grok_client import (
     image_spec_to_url,
     normalize_base_url,
     parse_models_payload,
+    prepare_image_bytes,
     sniff_image_mime,
 )
 from astrbot_plugin_grok_search.formatter import demote_markdown_to_text, normalize_link_spacing
@@ -107,13 +108,14 @@ class TestGrokClientPure(unittest.TestCase):
         png = _tiny_png_bytes()
         uri = image_spec_to_url("base64://" + base64.b64encode(png).decode("ascii"))
         self.assertTrue(uri.startswith("data:image/png;base64,"))
-        # 本地文件转 data URI
+        # 本地文件解码校验后转 data URI（RGB PNG 会被规范为 JPEG）
         with tempfile.NamedTemporaryFile(suffix=".png", delete=False) as f:
             f.write(png)
             path = f.name
         try:
             uri2 = image_spec_to_url(path)
-            self.assertTrue(uri2.startswith("data:image/png;base64,"))
+            self.assertIsNotNone(uri2)
+            self.assertTrue(uri2.startswith("data:image/"))
         finally:
             os.remove(path)
         # 非图片/不存在 -> None
@@ -124,6 +126,46 @@ class TestGrokClientPure(unittest.TestCase):
         self.assertEqual(sniff_image_mime(_tiny_png_bytes()), "image/png")
         self.assertEqual(sniff_image_mime(b"\xff\xd8\xff\xe0abc"), "image/jpeg")
         self.assertEqual(sniff_image_mime(b"GIF89a1234"), "image/gif")
+        # 未知格式返回空串，不再猜测
+        self.assertEqual(sniff_image_mime(b"<html>not an image</html>"), "")
+
+    def test_prepare_image_bytes(self):
+        try:
+            from PIL import Image
+        except Exception:
+            self.skipTest("Pillow 不可用")
+        import io as _io
+
+        # 完好的 RGB PNG -> 重编码为 JPEG
+        im = Image.new("RGB", (32, 32), color=(255, 0, 0))
+        b = _io.BytesIO(); im.save(b, format="PNG")
+        prepared = prepare_image_bytes(b.getvalue())
+        self.assertIsNotNone(prepared)
+        mime, data = prepared
+        self.assertEqual(mime, "image/jpeg")
+        with Image.open(_io.BytesIO(data)) as back:
+            self.assertEqual(back.size, (32, 32))
+
+        # 带透明通道 -> 保留 PNG
+        im2 = Image.new("RGBA", (16, 16), color=(0, 255, 0, 128))
+        b2 = _io.BytesIO(); im2.save(b2, format="PNG")
+        mime2, _ = prepare_image_bytes(b2.getvalue())
+        self.assertEqual(mime2, "image/png")
+
+        # 损坏的 PNG（魔数正常但内容截断）-> None，不再发送给上游
+        corrupt = b.getvalue()[: len(b.getvalue()) // 2]
+        self.assertIsNone(prepare_image_bytes(corrupt))
+
+        # HTML 错误页伪装 -> None
+        self.assertIsNone(prepare_image_bytes(b"<html>err</html>"))
+
+    def test_base64_spec_padding(self):
+        # 无 padding 的 base64:// 也能正确解码（RGB PNG 会被规范为 JPEG）
+        png = _tiny_png_bytes()
+        b64 = base64.b64encode(png).decode("ascii").rstrip("=")
+        uri = image_spec_to_url("base64://" + b64)
+        self.assertIsNotNone(uri)
+        self.assertTrue(uri.startswith("data:image/"))
 
     def test_extract_response(self):
         payload = {

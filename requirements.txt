@@ -1,3 +1,4 @@
 aiohttp>=3.8.0
+Pillow>=9.0
 ##PyMuPDF>=1.21.0
 ##PyPDF2>=3.0.0
