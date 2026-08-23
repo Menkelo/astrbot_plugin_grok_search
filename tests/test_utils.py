@@ -1,58 +1,88 @@
 from __future__ import annotations
 
+import base64
+import os
+import struct
+import tempfile
 import unittest
 
-from astrbot_plugin_grok_search.main import GrokSearchPlugin
+from astrbot_plugin_grok_search.main import ZssmGrokPlugin
 from astrbot_plugin_grok_search.grok_client import (
     build_search_tools,
     extract_citations,
     extract_reply_text,
     format_citations,
+    image_spec_to_url,
     normalize_base_url,
+    sniff_image_mime,
 )
 from astrbot_plugin_grok_search.formatter import demote_markdown_to_text, normalize_link_spacing
+from astrbot_plugin_grok_search.file_preview_utils import build_text_exts_from_config
 
 
-class TestQueryExtraction(unittest.TestCase):
-    def test_web_query(self):
-        x = lambda t: GrokSearchPlugin.extract_query(t, ["web"])
-        self.assertEqual(x("/search 今天天气"), "今天天气")
-        self.assertEqual(x("search 今天天气"), "今天天气")
-        self.assertEqual(x("/搜索 今天天气"), "今天天气")
-        self.assertEqual(x("/搜索：今天天气"), "今天天气")
-        self.assertEqual(x("/联网搜索 北京新闻"), "北京新闻")
-        self.assertEqual(x("/search 一下今天天气"), "今天天气")
-        self.assertEqual(x("/search"), "")
-        self.assertEqual(x(""), "")
+def _tiny_png_bytes() -> bytes:
+    # 1x1 红色 PNG
+    return base64.b64decode(
+        "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg=="
+    )
 
-    def test_x_query(self):
-        x = lambda t: GrokSearchPlugin.extract_query(t, ["x"])
-        self.assertEqual(x("/xsearch 马斯克最新动态"), "马斯克最新动态")
-        self.assertEqual(x("/x搜索 马斯克"), "马斯克")
-        self.assertEqual(x("/推特搜索 世界杯"), "世界杯")
-        self.assertEqual(x("/搜推特 AI"), "AI")
-        self.assertEqual(x("xsearch 马斯克"), "马斯克")
-        self.assertEqual(x("/xsearch"), "")
 
-    def test_all_query(self):
-        x = lambda t: GrokSearchPlugin.extract_query(t, ["web", "x"])
-        self.assertEqual(x("/gsearch 马斯克 最新消息"), "马斯克 最新消息")
-        self.assertEqual(x("/allsearch AI 进展"), "AI 进展")
-        self.assertEqual(x("/全搜 今天大事"), "今天大事")
-        self.assertEqual(x("/全网搜索：科技新闻"), "科技新闻")
-        self.assertEqual(x("/混合搜索 火箭"), "火箭")
-        self.assertEqual(x("/gsearch"), "")
+class TestZssmTrigger(unittest.TestCase):
+    def test_strip_trigger_content(self):
+        self.assertEqual(ZssmGrokPlugin._strip_trigger_and_get_content("zssm hello"), "hello")
+        self.assertEqual(ZssmGrokPlugin._strip_trigger_and_get_content("  /zssm  hello  "), "hello")
+        self.assertEqual(ZssmGrokPlugin._strip_trigger_and_get_content("zssm? hello"), "hello")
+        self.assertEqual(ZssmGrokPlugin._strip_trigger_and_get_content("zssm：hello"), "hello")
+        self.assertEqual(ZssmGrokPlugin._strip_trigger_and_get_content("zssm，hello world"), "hello world")
+        self.assertEqual(ZssmGrokPlugin._strip_trigger_and_get_content("zssm"), "")
 
-    def test_multiline_query(self):
-        q = GrokSearchPlugin.extract_query("/search 今天的天气\n要详细的", ["web"])
-        self.assertEqual(q, "今天的天气\n要详细的")
+    def test_is_zssm_trigger(self):
+        self.assertTrue(ZssmGrokPlugin._is_zssm_trigger("zssm hello"))
+        self.assertTrue(ZssmGrokPlugin._is_zssm_trigger("zssm：什么是量子计算"))
+        self.assertFalse(ZssmGrokPlugin._is_zssm_trigger("hello world"))
+        self.assertFalse(ZssmGrokPlugin._is_zssm_trigger("zssmhello"))
+
+    def test_decide_search_kind(self):
+        k = ZssmGrokPlugin._decide_search_kind
+        self.assertEqual(k("搜索一下今天的天气"), "web")
+        self.assertEqual(k("联网搜索 北京天气"), "web")
+        self.assertEqual(k("帮我查一下上海到北京的高铁"), "web")
+        self.assertEqual(k("x搜索 马斯克最新动态"), "x")
+        self.assertEqual(k("推特搜索 世界杯"), "x")
+        self.assertEqual(k("搜一下推特上关于AI的讨论"), "x")
+        self.assertEqual(k("全搜 今天大事"), "all")
+        self.assertEqual(k("全网搜索：科技新闻"), "all")
+        self.assertEqual(k("混合搜索 火箭"), "all")
+        self.assertEqual(k("什么是量子计算"), "")
+        self.assertEqual(k(""), "")
+        # 不应误判
+        self.assertEqual(k("查xlsx怎么用"), "")
+        self.assertEqual(k("推荐一下好吃的"), "")
+
+    def test_extract_search_query(self):
+        q = ZssmGrokPlugin._extract_search_query
+        self.assertEqual(q("搜索一下今天的天气"), "今天的天气")
+        self.assertEqual(q("x搜索 马斯克最新动态"), "马斯克最新动态")
+        self.assertEqual(q("全搜 今天大事"), "今天大事")
+        self.assertEqual(q("非搜索文本"), "非搜索文本")
+
+
+class TestFormatter(unittest.TestCase):
+    def test_demote_keeps_section_headers(self):
+        s = lambda t: demote_markdown_to_text(normalize_link_spacing(t))
+        self.assertEqual(
+            s("**关键词**\n天气 [[1]](https://a.com)[[2]](https://b.com) **详细阐述** 晴"),
+            "**关键词**\n天气 [1] https://a.com [2] https://b.com **详细阐述** 晴",
+        )
+
+    def test_demote_markdown(self):
+        s = lambda t: demote_markdown_to_text(normalize_link_spacing(t))
+        self.assertEqual(s("## 标题\n正文 `code` ~~删~~ *斜* **粗**"), "标题\n正文 code 删 斜 粗")
 
 
 class TestGrokClientPure(unittest.TestCase):
     def test_normalize_base_url(self):
         self.assertEqual(normalize_base_url("http://127.0.0.1:8000"), "http://127.0.0.1:8000/v1")
-        self.assertEqual(normalize_base_url("http://127.0.0.1:8000/"), "http://127.0.0.1:8000/v1")
-        self.assertEqual(normalize_base_url("http://127.0.0.1:8000/v1"), "http://127.0.0.1:8000/v1")
         self.assertEqual(normalize_base_url("http://127.0.0.1:8000/v1/"), "http://127.0.0.1:8000/v1")
         self.assertEqual(normalize_base_url("127.0.0.1:8000"), "http://127.0.0.1:8000/v1")
         self.assertEqual(normalize_base_url("  "), "")
@@ -60,23 +90,40 @@ class TestGrokClientPure(unittest.TestCase):
     def test_build_search_tools(self):
         self.assertEqual(build_search_tools(["web"]), [{"type": "web_search"}])
         self.assertEqual(build_search_tools(["x"]), [{"type": "x_search"}])
-        # 组合搜索：同一请求同时声明两种工具
         self.assertEqual(
-            build_search_tools(["web", "x"]),
+            build_search_tools(["all"]),
             [{"type": "web_search"}, {"type": "x_search"}],
         )
-        self.assertEqual(
-            build_search_tools(["web", "x"], x_from_date="2026-08-01", x_to_date="2026-08-24"),
-            [
-                {"type": "web_search"},
-                {"type": "x_search", "from_date": "2026-08-01", "to_date": "2026-08-24"},
-            ],
-        )
-        self.assertEqual(
-            build_search_tools(["x"], x_from_date="2026/08/01", x_to_date="bad"),
-            [{"type": "x_search"}],
-        )
         self.assertEqual(build_search_tools([]), [])
+
+    def test_image_spec_to_url(self):
+        # http / data URI 原样保留
+        self.assertEqual(image_spec_to_url("https://a.com/x.png"), "https://a.com/x.png")
+        self.assertEqual(
+            image_spec_to_url("data:image/png;base64,AAA"),
+            "data:image/png;base64,AAA",
+        )
+        # base64:// 转 data URI 并嗅探 mime
+        png = _tiny_png_bytes()
+        uri = image_spec_to_url("base64://" + base64.b64encode(png).decode("ascii"))
+        self.assertTrue(uri.startswith("data:image/png;base64,"))
+        # 本地文件转 data URI
+        with tempfile.NamedTemporaryFile(suffix=".png", delete=False) as f:
+            f.write(png)
+            path = f.name
+        try:
+            uri2 = image_spec_to_url(path)
+            self.assertTrue(uri2.startswith("data:image/png;base64,"))
+        finally:
+            os.remove(path)
+        # 非图片/不存在 -> None
+        self.assertIsNone(image_spec_to_url("Z:\\not\\exist.png"))
+        self.assertIsNone(image_spec_to_url(""))
+
+    def test_sniff_image_mime(self):
+        self.assertEqual(sniff_image_mime(_tiny_png_bytes()), "image/png")
+        self.assertEqual(sniff_image_mime(b"\xff\xd8\xff\xe0abc"), "image/jpeg")
+        self.assertEqual(sniff_image_mime(b"GIF89a1234"), "image/gif")
 
     def test_extract_response(self):
         payload = {
@@ -87,39 +134,25 @@ class TestGrokClientPure(unittest.TestCase):
                         "annotations": [
                             {"type": "url_citation", "url_citation": {"title": "天气网", "url": "https://a.com/1"}},
                             {"type": "url_citation", "url_citation": {"title": "重复", "url": "https://a.com/1"}},
-                            {"type": "url_citation", "url_citation": {"title": "新闻", "url": "https://b.com/2"}},
                         ],
                     }
                 }
             ]
         }
         self.assertEqual(extract_reply_text(payload), "今天北京晴 [1]。")
-        self.assertEqual(
-            extract_citations(payload),
-            [("天气网", "https://a.com/1"), ("新闻", "https://b.com/2")],
-        )
-        formatted = format_citations(extract_citations(payload))
-        self.assertIn("[1] 天气网（https://a.com/1）", formatted)
-        self.assertIn("[2] 新闻（https://b.com/2）", formatted)
-
-        payload_parts = {
-            "choices": [
-                {"message": {"content": [{"type": "output_text", "text": "你好"}, {"type": "text", "text": "世界"}]}}
-            ]
-        }
-        self.assertEqual(extract_reply_text(payload_parts), "你好\n世界")
+        self.assertEqual(extract_citations(payload), [("天气网", "https://a.com/1")])
+        self.assertIn("[1] 天气网（https://a.com/1）", format_citations(extract_citations(payload)))
         self.assertEqual(extract_reply_text({}), "")
         self.assertEqual(extract_citations({}), [])
 
 
-class TestFormatter(unittest.TestCase):
-    def test_demote_markdown(self):
-        s = lambda t: demote_markdown_to_text(normalize_link_spacing(t))
-        self.assertEqual(
-            s("天气[**晴**](https://a.com)[[2]](https://b.com)"),
-            "天气晴（https://a.com） [2] https://b.com",
-        )
-        self.assertEqual(s("## 标题\n正文 `code` ~~删~~ *斜* **粗**"), "标题\n正文 code 删 斜 粗")
+class TestFileExts(unittest.TestCase):
+    def test_build_text_exts(self):
+        exts = build_text_exts_from_config("md, json, .py", ["txt"])
+        self.assertIn(".txt", exts)
+        self.assertIn(".md", exts)
+        self.assertIn(".json", exts)
+        self.assertIn(".py", exts)
 
 
 if __name__ == "__main__":

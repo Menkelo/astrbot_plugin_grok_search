@@ -1,6 +1,6 @@
 name: astrbot_plugin_grok_search
-display_name: Grok 搜索
-desc: "[全平台] /search 联网搜索、/xsearch X（推特）搜索、/gsearch 组合搜索，基于 grok2api 服务端搜索工具，回复自带参考链接"
-version: 1.1.0
+display_name: Zssm(Grok)
+desc: "[aiocqhttp] zssm 的 grok2api 版：解释文本/图片/群文件/合并转发，支持联网搜索、X 搜索与组合搜索"
+version: 2.0.0
 author: Menkelo
 repo: https://github.com/Menkelo/astrbot_plugin_grok_search

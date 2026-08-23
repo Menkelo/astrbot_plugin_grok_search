@@ -1,4 +1,10 @@
 {
+  "enable_keyword_zssm": {
+    "description": "是否启用“zssm”关键词自动触发",
+    "type": "bool",
+    "default": true,
+    "hint": "关闭后仅响应 /zssm 指令，不再通过纯文本“zssm”自动触发"
+  },
   "grok2api_base_url": {
     "description": "grok2api 服务地址",
     "type": "string",
@@ -12,31 +18,19 @@
     "hint": "即 grok2api 后台创建的 Client Key（请求时以 Bearer 方式携带）"
   },
   "grok2api_model": {
-    "description": "搜索使用的模型名",
+    "description": "使用的模型名",
     "type": "string",
     "default": "grok-4",
-    "hint": "对应 grok2api 中配置的公开模型名"
-  },
-  "grok2api_x_from_date": {
-    "description": "X 搜索起始日期（可选）",
-    "type": "string",
-    "default": "",
-    "hint": "格式 YYYY-MM-DD，留空不限"
-  },
-  "grok2api_x_to_date": {
-    "description": "X 搜索结束日期（可选）",
-    "type": "string",
-    "default": "",
-    "hint": "格式 YYYY-MM-DD，留空不限"
+    "hint": "对应 grok2api 中配置的公开模型名；解释图片需选择支持视觉的模型"
   },
   "llm_timeout_sec": {
-    "description": "搜索请求超时（秒）",
+    "description": "LLM 调用超时（秒）",
     "type": "int",
     "default": 90,
     "hint": "搜索类请求耗时较长，范围建议 60-180"
   },
   "llm_retry_times": {
-    "description": "请求失败自动重试次数（含首次）",
+    "description": "LLM 调用失败自动重试次数（含首次）",
     "type": "int",
     "default": 2,
     "hint": "1=不重试；2=重试1次；建议范围 1-5"
@@ -46,5 +40,17 @@
     "type": "bool",
     "default": true,
     "hint": "在回复末尾附加 cost: x.xxx s"
+  },
+  "file_preview_max_size_kb": {
+    "description": "群文件内容预览允许的最大文件大小（KB）",
+    "type": "int",
+    "default": 100,
+    "hint": "超过该大小的群文件仅展示文件名和说明，不尝试读取内容片段"
+  },
+  "file_preview_exts": {
+    "description": "群文件内容预览的文本扩展名（逗号分隔）",
+    "type": "string",
+    "default": "txt,md,log,json,csv,ini,cfg,yml,yaml,py",
+    "hint": "仅对这些后缀的群文件尝试读取部分内容并交给 LLM 解释"
   }
 }

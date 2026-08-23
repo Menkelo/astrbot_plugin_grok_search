@@ -1,62 +1,56 @@
-# Grok 搜索 (astrbot_plugin_grok_search)
+# Zssm(Grok) — astrbot_plugin_grok_search
 
-一个 AstrBot 插件：通过 [chenyme/grok2api](https://github.com/chenyme/grok2api) 的服务端搜索工具，为聊天平台提供**联网搜索**与 **X（推特）搜索**，回复末尾自动附带参考链接。
+[astrbot_plugin_zssm_core](https://github.com/Menkelo/astrbot_plugin_zssm_core) 的 **grok2api 版**：完整的 zssm 体验（解释文本 / 图片 / QQ 群文件 / 合并转发），LLM 调用全部直连 [chenyme/grok2api](https://github.com/chenyme/grok2api)，并支持通过其服务端工具进行**联网搜索**、**X（推特）搜索**与**组合搜索**。
 
-从 [astrbot_plugin_zssm_core](https://github.com/Menkelo/astrbot_plugin_zssm_core) v1.8.0 的搜索功能独立拆分而来。
+> v2.0.0 起本插件从"纯搜索插件"升级为完整 zssm 替代，不再依赖 AstrBot Provider。
 
 ---
 
 ## 功能
 
-- **联网搜索**（`web_search` 工具）：`/search 今天北京天气`
-- **X（推特）搜索**（`x_search` 工具）：`/xsearch 马斯克最新动态`，支持配置日期范围
-- **组合搜索**：`/gsearch 今天大事` —— 一次请求同时开启联网搜索 + X 搜索，由模型综合两边信息回答（需 Console/Build 类账号）
-- 回复末尾自动附带从响应引用（`url_citation`）中提取的「参考链接」列表（标题 + URL，去重）
-- 回复格式自动降级为 QQ 等纯文本客户端友好的排版（剥离 markdown 标记、链接转裸 URL）
-- 支持回复一条消息后再发指令，被回复的文本会作为搜索上下文
-- 请求失败自动重试、超时保护、耗时显示
+- **文本解释**：`zssm 什么是量子纠缠` —— 详细解释，字数不限
+- **图片解释（视觉）**：`zssm [图片]` 或回复图片后发 `zssm` —— 图片以 data URI / URL 直接送入 grok2api 视觉模型
+- **QQ 群文件解释**：回复群文件后发 `zssm`，文本类读取内容预览，PDF 转 Markdown（需 PyMuPDF，可选）
+- **合并转发解释**：回复聊天记录后发 `zssm`，展开全部节点整段解释
+- **联网搜索**：`zssm 搜索今天的天气`（`web_search` 服务端工具）
+- **X（推特）搜索**：`zssm x搜索马斯克最新动态`（`x_search` 服务端工具）
+- **组合搜索**：`zssm 全搜今天大事` —— 一次请求同时开启联网 + X 搜索
+- 搜索回复末尾自动附带「参考链接」列表（从响应引用去重提取）
+- 回复格式自动降级为 QQ 等纯文本客户端友好排版，保留 `**关键词**` / `**详细阐述**` 小节标题
 
-## 指令
+## 触发方式（与 zssm_core 一致）
 
-| 指令 | 别名 | 说明 |
-|------|------|------|
-| `/search <问题>` | `/搜索`、`/联网搜索` | 联网搜索 |
-| `/xsearch <问题>` | `/x搜索`、`/推特搜索`、`/搜推特` | X（推特）搜索 |
-| `/gsearch <问题>` | `/allsearch`、`/全搜`、`/全网搜索`、`/混合搜索` | 组合搜索（联网 + X 同时进行） |
-
-示例：
-
-```
-/search 今天有什么科技新闻
-/搜索 一下上海天气
-/xsearch 马斯克最新推文
-/gsearch 火箭回收最新进展
-```
+- **指令**：`/zssm`（别名：`知识说明`、`解释`）
+- **关键词**：消息文本中包含 `zssm` 时自动触发，可通过配置项 `enable_keyword_zssm` 关闭
+- **搜索指令**：在 `zssm` 后跟 `搜索/联网/查一下…`（联网）、`x搜索/搜推特/推特搜索…`（X）、`全搜/全网搜索/混合搜索…`（组合）
 
 ## 配置
 
 | 配置项 | 类型 | 默认值 | 说明 |
 |--------|------|--------|------|
+| `enable_keyword_zssm` | bool | `true` | 是否启用“zssm”关键词自动触发。 |
 | `grok2api_base_url` | string | (空) | grok2api 服务地址，如 `http://127.0.0.1:8000`（可含/不含 `/v1`，自动补全）。 |
 | `grok2api_api_key` | string | (空) | grok2api 后台创建的客户端 API Key（Bearer 方式携带）。 |
-| `grok2api_model` | string | `grok-4` | grok2api 中配置的公开模型名。 |
-| `grok2api_x_from_date` | string | (空) | X 搜索起始日期（YYYY-MM-DD），留空不限。 |
-| `grok2api_x_to_date` | string | (空) | X 搜索结束日期（YYYY-MM-DD），留空不限。 |
-| `llm_timeout_sec` | int | `90` | 搜索请求超时（秒）。 |
+| `grok2api_model` | string | `grok-4` | grok2api 中配置的公开模型名；解释图片需选择支持视觉的模型。 |
+| `llm_timeout_sec` | int | `90` | LLM 调用超时（秒）。 |
 | `llm_retry_times` | int | `2` | 失败重试次数（含首次）。 |
 | `show_cost` | bool | `true` | 回复末尾显示耗时。 |
+| `file_preview_max_size_kb` | int | `100` | 群文件内容预览最大文件大小（KB）。 |
+| `file_preview_exts` | string | `txt,md,log,…` | 群文件内容预览的文本扩展名（逗号分隔）。 |
 
 ## 依赖
 
-- 需要 Python 3.10+ 与 `aiohttp`（安装插件时自动安装）。
-- 需要自行部署 [grok2api](https://github.com/chenyme/grok2api)，并在其中创建客户端 API Key。
+- **必需**：`aiohttp`（安装插件时自动安装）
+- **可选**：`PyMuPDF`（PDF 转 Markdown，效果更好）/ `PyPDF2`（备选 PDF 解析）
+- 需要自行部署 [grok2api](https://github.com/chenyme/grok2api)，并在其中创建客户端 API Key
 
 ## 已知限制
 
-- **X 搜索需要 grok2api 内的账号类型支持**：Console/Build 类账号支持 `x_search`；Web 类（grok.com 网页逆向）账号仅支持联网搜索，使用 `/xsearch` 会收到上游报错。
-- 引用链接依赖上游返回的 `annotations` 字段，个别模型/账号可能不带引用。
+- **X 搜索需要 grok2api 内的账号类型支持**：Console/Build 类账号支持 `x_search`；Web 类（grok.com 网页逆向）账号仅支持联网搜索，`x搜索`/`全搜` 会收到上游报错。
+- 图片解释依赖所选模型的视觉能力；本地图片/base64 会转为 data URI 发送（单张上限 8MB）。
+- 与 zssm_core 同时安装时会通过 `zssm_handled` 标记互相去重（先到先得），建议只启用其一。
 
 ## 致谢
 
+- [薄暝](https://github.com/xiaoxi68) - 原始插件 `astrbot_zssm_explain` 的开发者
 - [chenyme/grok2api](https://github.com/chenyme/grok2api) - Grok 逆向 API 项目
-- [astrbot_plugin_zssm_core](https://github.com/Menkelo/astrbot_plugin_zssm_core) - 本插件由此拆分
