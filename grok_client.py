@@ -21,6 +21,13 @@ GROK2API_SEARCH_ALL = "all"
 
 # 单张图片（本地/base64）允许的最大字节数，超过则跳过
 MAX_IMAGE_BYTES = 8 * 1024 * 1024
+# 远程图片下载超时（秒）与并发数
+IMAGE_DOWNLOAD_TIMEOUT_SEC = 15
+IMAGE_DOWNLOAD_CONCURRENCY = 4
+IMAGE_DOWNLOAD_HEADERS = {
+    "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0 Safari/537.36",
+    "Accept": "image/*,*/*;q=0.8",
+}
 
 
 def normalize_base_url(url: str) -> str:
@@ -61,13 +68,16 @@ def sniff_image_mime(data: bytes) -> str:
 
 
 def image_spec_to_url(spec: str) -> Optional[str]:
-    """把图片规格（http(s)/data URI/base64://本地路径）转换为 chat completions 可用的 image_url。
-    本地文件与 base64 统一转为 data URI；无法处理时返回 None。"""
+    """把图片规格（data URI/base64://本地路径）转换为 chat completions 可用的 image_url。
+    本地文件与 base64 统一转为 data URI；无法处理时返回 None。
+    注意：http(s) 远程图片不在此处理（服务端可能拉取失败），由 chat() 先下载转 data URI。"""
     if not isinstance(spec, str) or not spec.strip():
         return None
     s = spec.strip()
     ls = s.lower()
-    if ls.startswith(("http://", "https://", "data:image/")):
+    if ls.startswith(("http://", "https://")):
+        return None  # 远程图片交给 download_image_to_data_uri
+    if ls.startswith("data:image/"):
         return s
     try:
         if ls.startswith("base64://"):
@@ -92,6 +102,40 @@ def image_spec_to_url(spec: str) -> Optional[str]:
     except Exception:
         return None
     return None
+
+
+async def download_image_to_data_uri(
+    url: str,
+    *,
+    timeout_sec: int = IMAGE_DOWNLOAD_TIMEOUT_SEC,
+    max_bytes: int = MAX_IMAGE_BYTES,
+    logger: Optional[Any] = None,
+) -> Optional[str]:
+    """把远程图片下载到本地并转为 data URI。
+
+    QQ 转发/引用消息里的图片是腾讯 CDN 链接，grok2api 服务端往往无法直接抓取
+    （会报 invalid_image / cannot resolve Image URL），因此在插件侧先下载内联。"""
+    if not isinstance(url, str) or not url.strip().lower().startswith(("http://", "https://")):
+        return None
+    try:
+        timeout = aiohttp.ClientTimeout(total=max(5, timeout_sec))
+        async with aiohttp.ClientSession(timeout=timeout, headers=IMAGE_DOWNLOAD_HEADERS) as session:
+            async with session.get(url.strip()) as resp:
+                if resp.status != 200:
+                    if logger is not None:
+                        logger.warning("grok_search: download image HTTP %s: %s", resp.status, url[:160])
+                    return None
+                data = await resp.content.read(max_bytes + 1)
+        if not data or len(data) > max_bytes:
+            if logger is not None:
+                logger.warning("grok_search: image too large or empty, skip: %s", url[:160])
+            return None
+        mime = sniff_image_mime(data)
+        return f"data:{mime};base64,{base64.b64encode(data).decode('ascii')}"
+    except Exception as e:
+        if logger is not None:
+            logger.warning("grok_search: download image failed, skip: %s (%s)", url[:160], e)
+        return None
 
 
 def extract_citations(payload: dict) -> List[Tuple[str, str]]:
@@ -139,17 +183,6 @@ def extract_reply_text(payload: dict) -> str:
     return ""
 
 
-def format_citations(citations: List[Tuple[str, str]]) -> str:
-    """把引用链接格式化为追加在回复尾部的参考列表。"""
-    lines = []
-    for i, (title, url) in enumerate(citations, 1):
-        label = title if title else url
-        lines.append(f"[{i}] {label}（{url}）")
-    if not lines:
-        return ""
-    return "参考链接：\n" + "\n".join(lines)
-
-
 class GrokSearchError(Exception):
     """grok2api 调用失败（网络/鉴权/上游错误）。"""
 
@@ -189,14 +222,11 @@ class GrokChatClient:
         """发起一次对话。可带图片（视觉）与搜索工具，返回 (正文, [(标题, URL), ...])。"""
         user_content: Any = user_prompt
         if image_specs:
-            parts: List[dict] = [{"type": "text", "text": user_prompt}]
-            for spec in image_specs:
-                url = image_spec_to_url(spec)
-                if url:
+            image_urls = await self._resolve_image_specs(image_specs)
+            if image_urls:
+                parts: List[dict] = [{"type": "text", "text": user_prompt}]
+                for url in image_urls:
                     parts.append({"type": "image_url", "image_url": {"url": url}})
-                elif self._logger is not None:
-                    self._logger.warning("grok_search: skip unsupported image spec: %s", str(spec)[:120])
-            if len(parts) > 1:
                 user_content = parts
 
         body: dict = {
@@ -224,6 +254,42 @@ class GrokChatClient:
                 await asyncio.sleep(min(0.5 * (2 ** i), 3.0))
 
         raise GrokSearchError(str(last_exc))
+
+    async def _resolve_image_specs(self, image_specs: List[str]) -> List[str]:
+        """把图片规格列表解析为可直接发送的 image_url 列表。
+        远程图片先下载转 data URI（避免服务端抓取失败导致整个请求 400）；
+        下载失败或无法识别的图片自动跳过，不影响本次请求。"""
+        remote: List[str] = []
+        local: List[str] = []
+        for spec in image_specs:
+            if not isinstance(spec, str) or not spec.strip():
+                continue
+            s = spec.strip()
+            if s.lower().startswith(("http://", "https://")):
+                remote.append(s)
+            else:
+                u = image_spec_to_url(s)
+                if u:
+                    local.append(u)
+                elif self._logger is not None:
+                    self._logger.warning("grok_search: skip unsupported image spec: %s", s[:120])
+
+        if not remote:
+            return local
+
+        sem = asyncio.Semaphore(IMAGE_DOWNLOAD_CONCURRENCY)
+
+        async def _fetch(url: str) -> Optional[str]:
+            async with sem:
+                return await download_image_to_data_uri(url, logger=self._logger)
+
+        results = await asyncio.gather(*[_fetch(u) for u in remote], return_exceptions=True)
+        for url, res in zip(remote, results):
+            if isinstance(res, str) and res:
+                local.append(res)
+            elif self._logger is not None:
+                self._logger.warning("grok_search: 图片下载失败已跳过，仅按文本处理: %s", url[:160])
+        return local
 
     async def _request_once(self, body: dict) -> Tuple[str, List[Tuple[str, str]]]:
         headers = {

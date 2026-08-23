@@ -34,7 +34,6 @@ from .grok_client import (
     GROK2API_SEARCH_WEB,
     GROK2API_SEARCH_X,
     GROK2API_SEARCH_ALL,
-    format_citations,
 )
 from .formatter import normalize_link_spacing, demote_markdown_to_text
 from .file_preview_utils import (
@@ -580,22 +579,19 @@ class ZssmGrokPlugin(Star):
                     search_kinds = [GROK2API_SEARCH_ALL]
                     prompt_kind = GROK2API_SEARCH_ALL
                 x_involved = GROK2API_SEARCH_X in search_kinds or GROK2API_SEARCH_ALL in search_kinds
-                reply_text, citations = await client.chat(
+                reply_text, _citations = await client.chat(
                     user_prompt=build_search_user_prompt(query, prompt_kind),
                     system_prompt=build_search_system_prompt(),
                     kinds=search_kinds,
                 )
             else:
-                reply_text, citations = await client.chat(
+                reply_text, _citations = await client.chat(
                     user_prompt=plan.user_prompt,
                     system_prompt=self._build_system_prompt(),
                     image_specs=plan.images,
                 )
 
             out = demote_markdown_to_text(normalize_link_spacing(reply_text))
-            cites = format_citations(citations)
-            if cites:
-                out = f"{out}\n\n{cites}"
             if self._get_conf_bool(SHOW_COST_KEY, True):
                 elapsed = time.perf_counter() - start_ts
                 if isinstance(elapsed, (int, float)) and elapsed > 0:

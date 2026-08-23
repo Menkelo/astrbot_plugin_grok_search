@@ -11,7 +11,6 @@ from astrbot_plugin_grok_search.grok_client import (
     build_search_tools,
     extract_citations,
     extract_reply_text,
-    format_citations,
     image_spec_to_url,
     normalize_base_url,
     sniff_image_mime,
@@ -97,12 +96,12 @@ class TestGrokClientPure(unittest.TestCase):
         self.assertEqual(build_search_tools([]), [])
 
     def test_image_spec_to_url(self):
-        # http / data URI 原样保留
-        self.assertEqual(image_spec_to_url("https://a.com/x.png"), "https://a.com/x.png")
+        # data URI 原样保留；http 交给下载逻辑（此处返回 None）
         self.assertEqual(
             image_spec_to_url("data:image/png;base64,AAA"),
             "data:image/png;base64,AAA",
         )
+        self.assertIsNone(image_spec_to_url("https://a.com/x.png"))
         # base64:// 转 data URI 并嗅探 mime
         png = _tiny_png_bytes()
         uri = image_spec_to_url("base64://" + base64.b64encode(png).decode("ascii"))
@@ -141,7 +140,6 @@ class TestGrokClientPure(unittest.TestCase):
         }
         self.assertEqual(extract_reply_text(payload), "今天北京晴 [1]。")
         self.assertEqual(extract_citations(payload), [("天气网", "https://a.com/1")])
-        self.assertIn("[1] 天气网（https://a.com/1）", format_citations(extract_citations(payload)))
         self.assertEqual(extract_reply_text({}), "")
         self.assertEqual(extract_citations({}), [])
 
